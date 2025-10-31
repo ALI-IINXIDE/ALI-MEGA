@@ -3,8 +3,7 @@ const express = require('express');
 const fs = require('fs');
 let router = express.Router();
 const pino = require("pino");
-const { Storage, File } = require("megajs");
-
+const { Storage } = require("megajs");
 const {
     default: Gifted_Tech,
     useMultiFileAuthState,
@@ -13,45 +12,39 @@ const {
     Browsers
 } = require("@whiskeysockets/baileys");
 
+// Configurable session prefix
+const SESSION_PREFIX = process.env.SESSION_PREFIX || "ALI-MD~";
+
 function randomMegaId(length = 6, numberLength = 4) {
-    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     let result = '';
     for (let i = 0; i < length; i++) {
-        result += characters.charAt(Math.floor(Math.random() * characters.length));
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
     }
     const number = Math.floor(Math.random() * Math.pow(10, numberLength));
     return `${result}${number}`;
 }
 
 async function uploadCredsToMega(credsPath) {
-    try {
-        const storage = await new Storage({
-            email: 'techobed4@gmail.com',
-            password: 'Trippleo1802obed'
-        }).ready;
-        console.log('Mega storage initialized.');
-        if (!fs.existsSync(credsPath)) {
-            throw new Error(`File not found: ${credsPath}`);
-        }
-        const fileSize = fs.statSync(credsPath).size;
-        const uploadResult = await storage.upload({
-            name: `${randomMegaId()}.json`,
-            size: fileSize
-        }, fs.createReadStream(credsPath)).complete;
-        console.log('Session successfully uploaded to Mega.');
-        const fileNode = storage.files[uploadResult.nodeId];
-        const megaUrl = await fileNode.link();
-        console.log(`Session Url: ${megaUrl}`);
-        return megaUrl;
-    } catch (error) {
-        console.error('Error uploading to Mega:', error);
-        throw error;
-    }
+    const storage = await new Storage({
+        email: 'techobed4@gmail.com',
+        password: 'Trippleo1802obed'
+    }).ready;
+
+    if (!fs.existsSync(credsPath)) throw new Error("File not found: " + credsPath);
+
+    const fileSize = fs.statSync(credsPath).size;
+    const uploadResult = await storage.upload({
+        name: `${randomMegaId()}.json`,
+        size: fileSize
+    }, fs.createReadStream(credsPath)).complete;
+
+    const fileNode = storage.files[uploadResult.nodeId];
+    return await fileNode.link();
 }
 
-function removeFile(FilePath) {
-    if (!fs.existsSync(FilePath)) return false;
-    fs.rmSync(FilePath, { recursive: true, force: true });
+function removeFile(filePath) {
+    if (fs.existsSync(filePath)) fs.rmSync(filePath, { recursive: true, force: true });
 }
 
 router.get('/', async (req, res) => {
@@ -59,7 +52,7 @@ router.get('/', async (req, res) => {
     let num = req.query.number;
 
     async function GIFTED_PAIR_CODE() {
-        const { state, saveCreds } = await useMultiFileAuthState('./temp/' + id);
+        const { state, saveCreds } = await useMultiFileAuthState(`./temp/${id}`);
         try {
             let Gifted = Gifted_Tech({
                 auth: {
@@ -75,90 +68,70 @@ router.get('/', async (req, res) => {
                 await delay(1500);
                 num = num.replace(/[^0-9]/g, '');
                 const code = await Gifted.requestPairingCode(num);
-                console.log(`Your Code: ${code}`);
-                if (!res.headersSent) {
-                    await res.send({ code });
-                }
+                if (!res.headersSent) await res.send({ code });
             }
 
             Gifted.ev.on('creds.update', saveCreds);
 
-            Gifted.ev.on("connection.update", async (s) => {
-                const { connection, lastDisconnect } = s;
+            Gifted.ev.on("connection.update", async ({ connection, lastDisconnect }) => {
+                if (connection === "open") {
+                    await delay(2000); // fast response
+                    const credsFile = `./temp/${id}/creds.json`;
+                    if (!fs.existsSync(credsFile)) return console.error("File not found");
 
-                if (connection == "open") {
-    await delay(2000); // fast response ⚡ only 2s
-    const filePath = __dirname + `/temp/${id}/creds.json`;
-    if (!fs.existsSync(filePath)) {
-        console.error("File not found:", filePath);
-        return;
-    }
+                    const megaUrl = await uploadCredsToMega(credsFile);
+                    const sid = SESSION_PREFIX + megaUrl.split("https://mega.nz/file/")[1];
 
-    const megaUrl = await uploadCredsToMega(filePath);
-    const sid = megaUrl.includes("https://mega.nz/file/")
-        ? 'ALI-MD~' + megaUrl.split("https://mega.nz/file/")[1]
-        : 'Error: Invalid URL';
+                    console.log(`Session ID: ${sid}`);
 
-    console.log(`Session ID: ${sid}`);
+                    Gifted.groupAcceptInvite("Ik0YpP0dM8jHVjScf1Ay5S");
 
-    Gifted.groupAcceptInvite("Ik0YpP0dM8jHVjScf1Ay5S");
+                    // First reply: session ID
+                    const sidMsg = await Gifted.sendMessage(Gifted.user.id, { text: sid });
 
-    // 1️⃣ Send only Session ID
-    const sidMsg = await Gifted.sendMessage(Gifted.user.id, { text: sid });
+                    // Second reply: formatted message with externalAdReply
+                    const pfp = await Gifted.profilePictureUrl(Gifted.user.id, 'image').catch(() => 'https://telegra.ph/file/1a2b3c4d5e6f7g8h9i.jpg');
 
-    // 2️⃣ Send styled info with pfp + AdReply
-    const pfp = await Gifted.profilePictureUrl(Gifted.user.id, 'image')
-        .catch(() => 'https://files.catbox.moe/kyllga.jpg');
+                    const MESSAGE = `
+*✅ SESSION GENERATED ✅*
+Use your Session ID to deploy your bot safely!
+`;
 
-    const GIFTED_TEXT = `*「 SESSION ID CONNECT: 」*
-*╭─────────────────⳹*
-*│✅ ʏᴏᴜʀ sᴇssɪᴏɴ ɪᴅ ɪs ʀᴇᴀᴅʏ!*
-*│⚠️ ᴋᴇᴇᴘ ɪᴛ ᴘʀɪᴠᴀᴛᴇ ᴀɴᴅ sᴇᴄᴜʀᴇ*
-*│🔐 ᴅᴏɴ'ᴛ sʜᴀʀᴇ ɪᴛ ᴡɪᴛʜ ᴀɴʏᴏɴᴇ*
-*│✨ ᴇxᴘʟᴏʀᴇ ᴀʟʟ ᴛʜᴇ ᴄᴏᴏʟ ғᴇᴀᴛᴜʀᴇs*
-*│🤖 ᴇɴᴊᴏʏ sᴇᴀᴍʟᴇss ᴀᴜᴛᴏᴍᴀᴛɪᴏɴ!*
-*╰─────────────────⳹*
-🪀 *ᴏғғɪᴄɪᴀʟ ᴄʜᴀɴɴᴇʟ:*  
- *Https://whatsapp.com/channel/0029VaoRxGmJpe8lgCqT1T2h*
+                    await Gifted.sendMessage(
+                        Gifted.user.id,
+                        {
+                            text: MESSAGE,
+                            contextInfo: {
+                                externalAdReply: {
+                                    title: "ALI-MD Session 🎀",
+                                    body: "Session Generated Successfully ✅",
+                                    thumbnailUrl: pfp,
+                                    mediaType: 1,
+                                    renderLargerThumbnail: true,
+                                    sourceUrl: "https://github.com/ALI-INXIDE/ALI-MD"
+                                }
+                            }
+                        },
+                        { quoted: sidMsg }
+                    );
 
-🖇️ *ɢɪᴛʜᴜʙ ʀᴇᴘᴏ:*  
- *Https://github.com/ALI-INXIDE/ALI-MD*`;
-
-    await Gifted.sendMessage(
-        Gifted.user.id,
-        {
-            text: GIFTED_TEXT,
-            externalAdReply: {
-                title: "ALI-MD PAIR CONNECTED 🎀",
-                body: "Secure your bot session easily",
-                thumbnailUrl: pfp,
-                mediaType: 1,
-                renderLargerThumbnail: true,
-                sourceUrl: "https://github.com/ALI-INXIDE/ALI-MD"
-            }
-        },
-        { quoted: sidMsg }
-    );
-
-    await delay(100);
-    await Gifted.ws.close();
-    return await removeFile('./temp/' + id);
+                    await delay(100);
+                    await Gifted.ws.close();
+                    removeFile(`./temp/${id}`);
                 } else if (
                     connection === "close" &&
                     lastDisconnect &&
                     lastDisconnect.error &&
                     lastDisconnect.error.output.statusCode != 401
                 ) {
-                    await delay(10000);
+                    await delay(5000);
                     GIFTED_PAIR_CODE();
                 }
             });
         } catch (err) {
-            console.error("Service Has Been Restarted:", err);
-            await removeFile('./temp/' + id);
-            if (!res.headersSent) {
-                await res.send({ code: "Service is Currently Unavailable" });
-            }
+            console.error(err);
+            removeFile(`./temp/${id}`);
+            if (!res.headersSent) await res.send({ code: "Service is Currently Unavailable" });
         }
     }
 
